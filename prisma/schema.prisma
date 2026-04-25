@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum CheckoutSessionStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED
+  CANCELLED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  dapps Dapp[]
+}
+
+model Dapp {
+  id              String   @id @default(cuid())
+  ownerId         String
+  name            String
+  network         String   @default("testnet")
+  dailyBudgetMist Int      @default(500000000)
+  allowlistMode   String   @default("strict")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  owner             User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  apiKeys           ApiKey[]
+  sponsorshipEvents SponsorshipEvent[]
+  checkoutSessions  CheckoutSession[]
+
+  @@unique([ownerId, name])
+}
+
+model ApiKey {
+  id         String       @id @default(cuid())
+  dappId     String
+  label      String?
+  keyPrefix  String
+  keyHash    String       @unique
+  status     ApiKeyStatus @default(ACTIVE)
+  lastUsedAt DateTime?
+  createdAt  DateTime     @default(now())
+  revokedAt  DateTime?
+
+  dapp Dapp @relation(fields: [dappId], references: [id], onDelete: Cascade)
+
+  @@index([dappId])
+}
+
+model SponsorshipEvent {
+  id                 String   @id @default(cuid())
+  dappId             String
+  endpoint           String
+  status             String
+  errorCode          String?
+  gasBudget          Int?
+  purchaseAmountMist Int?
+  recipient          String?
+  latencyMs          Int?
+  createdAt          DateTime @default(now())
+
+  dapp Dapp @relation(fields: [dappId], references: [id], onDelete: Cascade)
+
+  @@index([dappId, createdAt])
+}
+
+model CheckoutSession {
+  id                  String                 @id @default(cuid())
+  dappId              String
+  merchantReference   String?
+  recipient           String
+  purchaseAmountMist  Int
+  network             String                 @default("testnet")
+  memo                String?
+  tokenHash           String                 @unique
+  status              CheckoutSessionStatus  @default(ACTIVE)
+  expiresAt           DateTime
+  completedAt         DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  dapp Dapp @relation(fields: [dappId], references: [id], onDelete: Cascade)
+
+  @@index([dappId, status])
+  @@index([expiresAt])
+}

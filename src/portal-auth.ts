@@ -14,7 +14,7 @@ const DEFAULT_TOKEN_TTL = "7d";
 
 export function assertPortalAuthConfigured() {
   if (!config.databaseUrl) {
-    throw new ApiError(503, "PORTAL_DISABLED", "Set DATABASE_URL to enable developer portal features");
+    throw new ApiError(503, "PORTAL_DISABLED", "Set DATABASE_URL (or DIRECT_URL) to enable developer portal features");
   }
 
   if (!config.portalJwtSecret) {

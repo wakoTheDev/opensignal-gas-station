@@ -6,6 +6,7 @@ import pino from "pino";
 import { requireApiKey } from "./auth.js";
 import { config } from "./config.js";
 import { checkoutRouter } from "./checkout.js";
+import { getPrismaClient } from "./db.js";
 import { toApiError } from "./errors.js";
 import { portalRouter } from "./portal.js";
 import { dappRateLimit } from "./rate-limit.js";
@@ -68,11 +69,35 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get("/health", (_req, res) => {
-  res.json({
-    ok: true,
+app.get("/health", async (_req, res) => {
+  const prisma = getPrismaClient();
+
+  const checks = {
+    database: {
+      enabled: Boolean(prisma),
+      ok: true,
+      message: prisma ? "connected" : "not configured",
+    },
+  };
+
+  let statusCode = 200;
+
+  if (prisma) {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+    } catch {
+      checks.database.ok = false;
+      checks.database.message = "unreachable";
+      statusCode = 503;
+    }
+  }
+
+  res.status(statusCode).json({
+    ok: statusCode === 200,
     service: "sui-gas-station",
     network: config.network,
+    uptimeSeconds: Math.floor(process.uptime()),
+    checks,
     timestamp: new Date().toISOString(),
   });
 });

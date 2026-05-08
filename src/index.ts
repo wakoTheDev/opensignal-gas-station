@@ -179,6 +179,7 @@ app.post("/v1/sponsor/sign", requireApiKey, dappRateLimit, async (req, res, next
 });
 
 app.use("/v1/portal", portalRouter);
+app.use("/", portalRouter);
 app.use("/v1", checkoutRouter);
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

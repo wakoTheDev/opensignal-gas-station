@@ -1,6 +1,8 @@
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
+import { fromBase64 } from "@mysten/bcs";
+import { verifyPersonalMessageSignature } from "@mysten/sui/verify";
 
 import { config } from "./config.js";
 import { ApiError } from "./errors.js";
@@ -68,4 +70,40 @@ export function apiKeyPrefix(apiKey: string): string {
 
 export function hashApiKey(apiKey: string): string {
   return crypto.createHash("sha256").update(apiKey).digest("hex");
+}
+
+
+export async function verifyWalletSignature(
+  message: string,
+  signature: string,
+  walletAddress: string,
+): Promise<boolean> {
+  try {
+    if (!message || !signature || !walletAddress) {
+      return false;
+    }
+
+    const normalizedAddress = walletAddress.toLowerCase();
+    if (!/^0x[a-fA-F0-9]{64}$/.test(normalizedAddress)) {
+      return false;
+    }
+
+    if (!message.includes(walletAddress) && !message.includes(normalizedAddress)) {
+      return false;
+    }
+
+    try {
+      fromBase64(signature);
+    } catch {
+      return false;
+    }
+
+    const messageBytes = new TextEncoder().encode(message);
+    await verifyPersonalMessageSignature(messageBytes, signature, {
+      address: normalizedAddress,
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
 }

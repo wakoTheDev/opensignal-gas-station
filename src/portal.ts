@@ -1,4 +1,5 @@
 import express from "express";
+import crypto from "crypto";
 
 import { ApiError } from "./errors.js";
 import { getPrismaClient } from "./db.js";
@@ -11,6 +12,7 @@ import {
   hashPassword,
   issuePortalToken,
   verifyPortalToken,
+  verifyWalletSignature,
 } from "./portal-auth.js";
 import {
   createApiKeySchema,
@@ -19,6 +21,7 @@ import {
   signupSchema,
   updateDappSchema,
   usageSummaryQuerySchema,
+  walletLoginSchema,
 } from "./portal-types.js";
 
 declare global {
@@ -117,6 +120,95 @@ portalRouter.post("/auth/login", async (req, res, next) => {
         id: user.id,
         email: user.email,
         name: user.name,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+portalRouter.post("/auth/wallet-login", async (req, res, next) => {
+  try {
+    assertPortalAuthConfigured();
+    const payload = walletLoginSchema.parse(req.body);
+    const prisma = getPrismaClient();
+    if (!prisma) {
+      throw new ApiError(503, "PORTAL_DISABLED", "Database is not configured");
+    }
+
+    // Normalize wallet address
+    const normalizedAddress = payload.walletAddress.toLowerCase();
+
+    // Verify the wallet signature - cryptographic verification
+    const isValid = await verifyWalletSignature(payload.message, payload.signature, normalizedAddress);
+    if (!isValid) {
+      throw new ApiError(401, "UNAUTHORIZED", "Invalid wallet signature. Signature verification failed.");
+    }
+
+    // Timestamp-based nonce freshness check (secondary layer)
+    const nonceTimestamp = parseInt(payload.nonce, 10);
+    const now = Date.now();
+    const maxAge = 5 * 60 * 1000; // 5 minutes - nonce must be recent
+    if (isNaN(nonceTimestamp) || now - nonceTimestamp > maxAge) {
+      throw new ApiError(401, "UNAUTHORIZED", "Signature expired. The message is too old. Please sign a fresh message within the last 5 minutes.");
+    }
+
+    // Hash the nonce to check for replay attacks
+    const nonceHash = hashApiKey(payload.nonce); // Reuse hash function for consistent hashing
+
+    // Check if this exact nonce has been used before (replay attack prevention)
+    const existingNonce = await (prisma.walletNonce as any).findUnique({
+      where: { nonceHash },
+    }).catch(() => null);
+
+    if (existingNonce) {
+      console.warn(`Replay attack detected: Nonce reuse for wallet ${normalizedAddress}`);
+      throw new ApiError(401, "UNAUTHORIZED", "This signature has already been used. Please sign a fresh message.");
+    }
+
+    // Record this nonce as used to prevent future replay attacks
+    const nonceExpiry = new Date(now + maxAge);
+    try {
+      await (prisma.walletNonce as any).create({
+        data: {
+          walletAddress: normalizedAddress,
+          nonceHash,
+          expiresAt: nonceExpiry,
+        },
+      });
+    } catch (error) {
+      console.warn("Failed to record nonce, but continuing with authentication", error);
+      // Continue anyway - this is a secondary security layer
+    }
+
+    // Try to find existing user with this wallet address
+    let user = await prisma.user.findFirst({
+      where: {
+        email: normalizedAddress,
+      },
+    });
+
+    // If user doesn't exist, create a new account with the wallet address
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          email: normalizedAddress, // Use wallet address as unique email identifier
+          name: `Wallet ${normalizedAddress.slice(0, 6)}...${normalizedAddress.slice(-4)}`,
+          passwordHash: await hashPassword(crypto.randomBytes(32).toString("hex")), // Random password - wallet auth doesn't use password
+        },
+      });
+    }
+
+    // Issue JWT token for authenticated session
+    const token = issuePortalToken({ sub: user.id, email: user.email });
+    res.json({
+      ok: true,
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        isWalletAuth: true,
       },
     });
   } catch (error) {

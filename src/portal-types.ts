@@ -34,3 +34,10 @@ export const usageSummaryQuerySchema = z.object({
   from: z.iso.datetime().optional(),
   to: z.iso.datetime().optional(),
 });
+
+export const walletLoginSchema = z.object({
+  walletAddress: z.string().min(1),
+  message: z.string().min(1),
+  signature: z.string().min(1),
+  nonce: z.string().min(1),
+});

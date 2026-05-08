@@ -5,7 +5,6 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
 }
 
 enum ApiKeyStatus {
@@ -100,5 +99,17 @@ model CheckoutSession {
   dapp Dapp @relation(fields: [dappId], references: [id], onDelete: Cascade)
 
   @@index([dappId, status])
+  @@index([expiresAt])
+}
+
+model WalletNonce {
+  id            String   @id @default(cuid())
+  walletAddress String
+  nonceHash     String   @unique
+  usedAt        DateTime @default(now())
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([walletAddress, expiresAt])
   @@index([expiresAt])
 }

@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
+import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { verifyPersonalMessageSignature } from "@mysten/sui/verify";
 
 import { config } from "./config.js";
@@ -12,6 +13,20 @@ export interface PortalClaims {
 }
 
 const DEFAULT_TOKEN_TTL = "7d";
+
+function defaultRpcUrl(network: string): string {
+  return network === "mainnet"
+    ? "https://fullnode.mainnet.sui.io:443"
+    : "https://fullnode.testnet.sui.io:443";
+}
+
+// Shared SuiJsonRpcClient used for zkLogin signature verification.
+// zkLogin proofs require fetching the provider JWK from the chain,
+// so verifyPersonalMessageSignature must receive a live client.
+const suiClient = new SuiJsonRpcClient({
+  network: config.network as "testnet" | "mainnet",
+  url: config.rpcUrl || defaultRpcUrl(config.network),
+});
 
 export function assertPortalAuthConfigured() {
   if (!config.databaseUrl) {
@@ -89,15 +104,17 @@ export async function verifyWalletSignature(
       return false;
     }
 
-    // Encode the exact message string the client signed
     const messageBytes = new TextEncoder().encode(message);
 
-    // Recover the public key from the Sui personal-message signature.
-    // Do NOT pass { address } — it may not be supported on all @mysten/sui
-    // versions and causes silent failures. We compare addresses ourselves below.
-    const publicKey = await verifyPersonalMessageSignature(messageBytes, signature);
-    const recoveredAddress = publicKey.toSuiAddress().toLowerCase();
+    // Pass the SuiJsonRpcClient so that zkLogin signatures can be verified.
+    // For standard Ed25519/Secp256k1 signatures the client is ignored.
+    // For zkLogin (Google/Apple OAuth wallets like Slush) it is required
+    // to fetch the provider JWK from the chain and verify the ZK proof.
+    const publicKey = await verifyPersonalMessageSignature(messageBytes, signature, {
+      client: suiClient,
+    });
 
+    const recoveredAddress = publicKey.toSuiAddress().toLowerCase();
     const match = recoveredAddress === normalizedAddress;
 
     if (!match) {
@@ -109,7 +126,6 @@ export async function verifyWalletSignature(
 
     return match;
   } catch (error) {
-    // Log the real exception so server logs show the actual failure reason
     console.error("[wallet-auth] verifyPersonalMessageSignature threw:", error);
     return false;
   }

@@ -1,7 +1,6 @@
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
-import { fromBase64 } from "@mysten/bcs";
 import { verifyPersonalMessageSignature } from "@mysten/sui/verify";
 
 import { config } from "./config.js";
@@ -72,7 +71,6 @@ export function hashApiKey(apiKey: string): string {
   return crypto.createHash("sha256").update(apiKey).digest("hex");
 }
 
-
 export async function verifyWalletSignature(
   message: string,
   signature: string,
@@ -80,30 +78,39 @@ export async function verifyWalletSignature(
 ): Promise<boolean> {
   try {
     if (!message || !signature || !walletAddress) {
+      console.warn("[wallet-auth] Missing required field — message, signature, or walletAddress is empty");
       return false;
     }
 
     const normalizedAddress = walletAddress.toLowerCase();
+
     if (!/^0x[a-fA-F0-9]{64}$/.test(normalizedAddress)) {
+      console.warn("[wallet-auth] Wallet address failed format check:", normalizedAddress);
       return false;
     }
 
-    if (!message.includes(walletAddress) && !message.includes(normalizedAddress)) {
-      return false;
-    }
-
-    try {
-      fromBase64(signature);
-    } catch {
-      return false;
-    }
-
+    // Encode the exact message string the client signed
     const messageBytes = new TextEncoder().encode(message);
-    await verifyPersonalMessageSignature(messageBytes, signature, {
-      address: normalizedAddress,
-    });
-    return true;
+
+    // Recover the public key from the Sui personal-message signature.
+    // Do NOT pass { address } — it may not be supported on all @mysten/sui
+    // versions and causes silent failures. We compare addresses ourselves below.
+    const publicKey = await verifyPersonalMessageSignature(messageBytes, signature);
+    const recoveredAddress = publicKey.toSuiAddress().toLowerCase();
+
+    const match = recoveredAddress === normalizedAddress;
+
+    if (!match) {
+      console.warn("[wallet-auth] Address mismatch after signature recovery", {
+        recovered: recoveredAddress,
+        expected: normalizedAddress,
+      });
+    }
+
+    return match;
   } catch (error) {
+    // Log the real exception so server logs show the actual failure reason
+    console.error("[wallet-auth] verifyPersonalMessageSignature threw:", error);
     return false;
   }
 }
